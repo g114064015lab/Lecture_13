@@ -16,27 +16,34 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-API_ENDPOINT = "https://opendata.cwa.gov.tw/fileapi/v1/opendataapi/F-A0010-001"
-DATASET_ID = "F-A0010-001"
-CACHED_FALLBACK_API_KEY = "CWA-1FFDDAEC-161F-46A3-BE71-93C32C52829F"
+API_ENDPOINT = "https://opendata.cwa.gov.tw/api/v1/rest/datastore/F-A0021-001"
+DATASET_ID = "F-A0021-001"
+CACHED_FALLBACK_API_KEY = "CWA-FE3705DB-3102-48DE-B396-30F5D45306C2"
 CACHE_TTL_SECONDS = 60 * 15
-DEFAULT_LOCATION = os.getenv("CWA_DEFAULT_LOCATION", "北部地區")
+DEFAULT_LOCATION = os.getenv("CWA_DEFAULT_LOCATION", "臺北市")
 DB_PATH = Path("data.db")
 WEATHER_ICON_MAP = {
     "1": "☀️",
+    "01": "☀️",
     "2": "🌤️",
+    "02": "🌤️",
     "3": "⛅",
+    "03": "⛅",
     "4": "🌥️",
+    "04": "🌥️",
     "5": "☁️",
+    "05": "☁️",
     "6": "🌧️",
+    "06": "🌧️",
     "7": "🌦️",
-    "8": "🌦️",
+    "07": "🌦️",
+    "8": "⛈️",
+    "08": "⛈️",
     "9": "🌫️",
+    "09": "🌫️",
     "10": "❄️",
     "11": "🌬️",
     "12": "🌨️",
-    "13": "🌧️",
-    "14": "⛈️",
 }
 
 
@@ -56,7 +63,7 @@ def main() -> None:
     initialize_theme_state()
     apply_theme(st.session_state.get("theme", "light"))
 
-    st.title("全臺農業一週氣象儀表板")
+    st.title("全臺 36 小時天氣預報儀表板")
 
     header_cols = st.columns([3, 1, 1])
     with header_cols[1]:
@@ -95,10 +102,6 @@ def main() -> None:
     issue_time = dataset.get("issue_time")
     if issue_time:
         st.caption(f"資料發布時間：{issue_time.strftime('%Y-%m-%d %H:%M')} (臺北時間)")
-
-    weather_profile = dataset.get("weather_profile")
-    if weather_profile:
-        st.info(f"天氣概況：{weather_profile}")
 
     left_col, right_col = st.columns([1.1, 2.1], gap="large")
     with left_col:
@@ -165,12 +168,10 @@ def apply_theme(mode: str) -> None:
 def load_forecast_data(api_key: str) -> Dict[str, Any]:
     payload, source, notice = retrieve_payload(api_key)
     locations = normalize_locations(payload)
-    issue_time = infer_issue_time(payload)
-    weather_profile = extract_weather_profile(payload)
+    issue_time = infer_issue_time(locations)
     return {
         "locations": locations,
         "issue_time": issue_time,
-        "weather_profile": weather_profile,
         "source": source,
         "notice": notice,
     }
@@ -179,7 +180,6 @@ def load_forecast_data(api_key: str) -> Dict[str, Any]:
 def fetch_forecast(api_key: str) -> Dict[str, Any]:
     params = {
         "Authorization": api_key,
-        "downloadType": "WEB",
         "format": "JSON",
     }
     response = requests.get(
@@ -190,8 +190,9 @@ def fetch_forecast(api_key: str) -> Dict[str, Any]:
     )
     response.raise_for_status()
     data = response.json()
-    if "cwaopendata" not in data:
-        raise RuntimeError("資料來源未回傳 cwaopendata 區塊")
+    if not data.get("success", False):
+        message = data.get("message") or "中央氣象署 API 回應失敗"
+        raise RuntimeError(message)
     return data
 
 
@@ -245,90 +246,102 @@ def load_cached_payload() -> Optional[Dict[str, Any]]:
 
 
 def normalize_locations(payload: Dict[str, Any]) -> List[Dict[str, Any]]:
-    locations = extract_locations(payload)
+    records = payload.get("records", {})
+    raw_locations = records.get("location", [])
     normalized = []
-    for raw in locations:
+    for raw in raw_locations:
         normalized_location = parse_location(raw)
         if normalized_location["timeline"]:
             normalized.append(normalized_location)
     return sorted(normalized, key=lambda item: item["name"])
 
 
-def extract_locations(payload: Dict[str, Any]) -> List[Dict[str, Any]]:
-    resource = extract_resource(payload)
-    agr_data = ((resource or {}).get("data") or {}).get("agrWeatherForecasts") or {}
-    forecasts = (agr_data.get("weatherForecasts") or {}).get("location") or []
-    if isinstance(forecasts, dict):
-        return [forecasts]
-    if isinstance(forecasts, list):
-        return forecasts
-    return []
-
-
-def extract_resource(payload: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-    resources = payload.get("cwaopendata", {}).get("resources")
-    if isinstance(resources, dict):
-        resource = resources.get("resource")
-        if isinstance(resource, list):
-            return resource[0]
-        return resource
-    if isinstance(resources, list) and resources:
-        return resources[0]
-    return None
-
-
-def extract_weather_profile(payload: Dict[str, Any]) -> Optional[str]:
-    resource = extract_resource(payload)
-    agr_data = ((resource or {}).get("data") or {}).get("agrWeatherForecasts") or {}
-    return agr_data.get("weatherProfile")
-
-
 def parse_location(data: Dict[str, Any]) -> Dict[str, Any]:
-    timeline = build_timeline(data.get("weatherElements", {}))
+    element_map = {
+        element.get("elementName"): element.get("time", [])
+        for element in data.get("weatherElement", [])
+        if element.get("elementName")
+    }
+    timeline = build_timeline(element_map)
+    parameter_map = {
+        param.get("parameterName"): param.get("parameterValue")
+        for param in data.get("parameter", [])
+        if param.get("parameterName")
+    }
     return {
         "name": data.get("locationName", "未知地區"),
-        "parameters": {},
+        "parameters": parameter_map,
         "timeline": timeline,
     }
 
 
-def build_timeline(elements: Dict[str, Any]) -> List[Dict[str, Any]]:
-    date_map: Dict[str, Dict[str, Any]] = {}
-    for key, element in elements.items():
-        daily = element.get("daily")
-        if not isinstance(daily, list):
-            continue
-        for entry in daily:
-            date_str = entry.get("dataDate")
-            if not date_str:
-                continue
-            slot = date_map.setdefault(
-                date_str,
-                {
-                    "startTime": parse_time(date_str),
-                    "endTime": None,
-                    "weather": None,
-                    "weather_code": None,
-                    "pop": None,
-                    "min_temp": None,
-                    "max_temp": None,
-                    "apparent_temp": None,
-                    "comfort": None,
-                },
-            )
-            if key == "Wx":
-                slot["weather"] = entry.get("weather")
-                slot["weather_code"] = entry.get("weatherid")
-            elif key == "MinT":
-                slot["min_temp"] = to_float(entry.get("temperature"))
-            elif key == "MaxT":
-                slot["max_temp"] = to_float(entry.get("temperature"))
-    for slot in date_map.values():
+def build_timeline(elements: Dict[str, List[Dict[str, Any]]]) -> List[Dict[str, Any]]:
+    reference_series = get_reference_series(elements)
+    timeline: List[Dict[str, Any]] = []
+    for idx, reference_block in enumerate(reference_series):
+        start_time = parse_time(reference_block.get("startTime") or reference_block.get("dataTime"))
+        end_time = parse_time(reference_block.get("endTime"))
+        weather_block = (
+            reference_block
+            if reference_block.get("parameter")
+            else get_element_entry(elements, idx, ["Wx", "WeatherDescription"])
+        )
+        slot = {
+            "startTime": start_time,
+            "endTime": end_time,
+            "weather": extract_text(weather_block),
+            "weather_code": extract_value(weather_block, prefer_value="parameterValue"),
+            "pop": to_float(extract_value(get_element_entry(elements, idx, ["PoP", "PoP12h"]))),
+            "min_temp": to_float(extract_value(get_element_entry(elements, idx, ["MinT"]))),
+            "max_temp": to_float(extract_value(get_element_entry(elements, idx, ["MaxT"]))),
+            "apparent_temp": to_float(extract_value(get_element_entry(elements, idx, ["AT", "ApparentT"]))),
+            "comfort": extract_text(get_element_entry(elements, idx, ["CI"])),
+        }
         temps = [temp for temp in [slot["min_temp"], slot["max_temp"]] if temp is not None]
         slot["avg_temp"] = sum(temps) / len(temps) if temps else None
-    return [
-        slot for _, slot in sorted(date_map.items(), key=lambda item: item[0])
-    ]
+        timeline.append(slot)
+    return timeline
+
+
+def get_reference_series(elements: Dict[str, List[Dict[str, Any]]]) -> List[Dict[str, Any]]:
+    preferred_order = ["Wx", "WeatherDescription", "MinT", "MaxT"]
+    for key in preferred_order:
+        series = elements.get(key)
+        if series:
+            return series
+    return next(iter(elements.values()), [])
+
+
+def get_element_entry(
+    elements: Dict[str, List[Dict[str, Any]]], index: int, candidates: List[str]
+) -> Optional[Dict[str, Any]]:
+    for key in candidates:
+        series = elements.get(key)
+        if series and 0 <= index < len(series):
+            return series[index]
+    return None
+
+
+def extract_value(block: Optional[Dict[str, Any]], prefer_value: str = "parameterName") -> Optional[str]:
+    if not block:
+        return None
+    parameter = block.get("parameter")
+    if isinstance(parameter, dict):
+        if prefer_value == "parameterValue":
+            return parameter.get("parameterValue") or parameter.get("parameterName")
+        return parameter.get("parameterName") or parameter.get("parameterValue")
+    element_value = block.get("elementValue")
+    if isinstance(element_value, list) and element_value:
+        candidate = element_value[0]
+        return candidate.get("value") or candidate.get("measures")
+    return block.get("value")
+
+
+def extract_text(block: Optional[Dict[str, Any]]) -> Optional[str]:
+    value = extract_value(block)
+    if value:
+        return str(value)
+    return None
 
 
 def to_float(value: Optional[str]) -> Optional[float]:
@@ -355,17 +368,19 @@ def parse_time(value: Optional[str]) -> Optional[datetime]:
     return None
 
 
-def infer_issue_time(payload: Dict[str, Any]) -> Optional[datetime]:
-    resource = extract_resource(payload)
-    metadata = (resource or {}).get("metadata") or {}
-    temporal = metadata.get("temporal") or {}
-    issue_time = temporal.get("issueTime")
-    return parse_time(issue_time)
+def infer_issue_time(locations: List[Dict[str, Any]]) -> Optional[datetime]:
+    times = [
+        slot["startTime"]
+        for location in locations
+        for slot in location.get("timeline", [])[:1]
+        if slot.get("startTime")
+    ]
+    return min(times) if times else None
 
 
 def render_location_selector(locations: List[Dict[str, Any]]) -> Dict[str, Any]:
-    st.subheader("區域列表")
-    query = st.text_input("搜尋地區", placeholder="輸入地區或關鍵字").strip()
+    st.subheader("縣市列表")
+    query = st.text_input("搜尋縣市", placeholder="輸入縣市或關鍵字").strip()
     if query:
         normalized_query = query.lower()
         filtered = [
@@ -387,7 +402,7 @@ def render_location_selector(locations: List[Dict[str, Any]]) -> Dict[str, Any]:
             break
     default_index = min(default_index, len(filtered) - 1)
     selected_idx = st.radio(
-        "選擇地區",
+        "選擇縣市",
         options=indices,
         index=default_index,
         label_visibility="collapsed",
@@ -402,9 +417,8 @@ def render_location_selector(locations: List[Dict[str, Any]]) -> Dict[str, Any]:
         column_config={
             "地區": st.column_config.Column("地區"),
             "天氣": st.column_config.Column("天氣"),
-            "最高溫": st.column_config.Column("最高溫"),
-            "最低溫": st.column_config.Column("最低溫"),
-            "平均溫度": st.column_config.Column("平均溫度"),
+            "溫度": st.column_config.Column("溫度"),
+            "降雨機率": st.column_config.Column("降雨機率"),
         },
     )
     return filtered[selected_idx]
@@ -426,9 +440,8 @@ def build_overview_dataframe(locations: List[Dict[str, Any]]) -> pd.DataFrame:
             {
                 "地區": loc["name"],
                 "天氣": f"{resolve_icon(slot)} {slot.get('weather') or '—'}",
-                "最高溫": format_temperature_value(slot.get("max_temp")),
-                "最低溫": format_temperature_value(slot.get("min_temp")),
-                "平均溫度": format_temperature_value(slot.get("avg_temp")),
+                "溫度": format_temperature(slot),
+                "降雨機率": format_percentage(slot.get("pop")),
             }
         )
     return pd.DataFrame(rows)
@@ -443,15 +456,15 @@ def render_location_details(location: Dict[str, Any]) -> None:
     current_slot = timeline[0]
     metrics = st.columns(4)
     with metrics[0]:
-        st.metric("最高溫", format_temperature_value(current_slot.get("max_temp")))
+        st.metric("平均溫度", format_temperature(current_slot))
     with metrics[1]:
-        st.metric("最低溫", format_temperature_value(current_slot.get("min_temp")))
+        st.metric("體感溫度", format_temperature_value(current_slot.get("apparent_temp")))
     with metrics[2]:
-        st.metric("平均溫度", format_temperature_value(current_slot.get("avg_temp")))
+        st.metric("降雨機率", format_percentage(current_slot.get("pop")))
     with metrics[3]:
-        st.metric("天氣現象", current_slot.get("weather") or "—")
+        st.metric("舒適度", current_slot.get("comfort") or "—")
 
-    st.markdown("#### 日別預報卡片")
+    st.markdown("#### 36 小時時段卡片")
     card_cols = st.columns(len(timeline))
     for col, slot in zip(card_cols, timeline):
         with col:
@@ -459,16 +472,16 @@ def render_location_details(location: Dict[str, Any]) -> None:
 
     chart_df = build_chart_dataframe(timeline)
     if not chart_df.empty:
-        st.markdown("#### 溫度趨勢")
+        st.markdown("#### 溫度 vs. 體感溫度")
         chart = (
             alt.Chart(chart_df)
             .transform_fold(
-                ["最高溫", "最低溫", "平均溫度"],
+                ["平均溫度", "體感溫度"],
                 as_=["類型", "溫度"],
             )
             .mark_line(point=True)
             .encode(
-                x=alt.X("時間:T", axis=alt.Axis(format="%m/%d")),
+                x=alt.X("時間:T", axis=alt.Axis(format="%m/%d %H:%M")),
                 y=alt.Y("溫度:Q", title="°C"),
                 color="類型:N",
                 tooltip=["時間:T", "類型:N", "溫度:Q"],
@@ -488,20 +501,13 @@ def render_location_details(location: Dict[str, Any]) -> None:
 def build_chart_dataframe(timeline: List[Dict[str, Any]]) -> pd.DataFrame:
     rows = []
     for slot in timeline:
-        if not slot.get("startTime"):
-            continue
-        if (
-            slot.get("avg_temp") is None
-            and slot.get("min_temp") is None
-            and slot.get("max_temp") is None
-        ):
+        if slot.get("avg_temp") is None and slot.get("apparent_temp") is None:
             continue
         rows.append(
             {
                 "時間": slot["startTime"],
-                "最高溫": slot.get("max_temp"),
-                "最低溫": slot.get("min_temp"),
                 "平均溫度": slot.get("avg_temp"),
+                "體感溫度": slot.get("apparent_temp"),
             }
         )
     return pd.DataFrame(rows)
@@ -512,11 +518,13 @@ def build_details_dataframe(timeline: List[Dict[str, Any]]) -> pd.DataFrame:
     for slot in timeline:
         rows.append(
             {
-                "日期": format_time(slot.get("startTime")),
+                "起始": format_time(slot.get("startTime")),
+                "結束": format_time(slot.get("endTime")),
                 "天氣": f"{resolve_icon(slot)} {slot.get('weather') or '—'}",
-                "最低溫": format_temperature_value(slot.get("min_temp")),
-                "最高溫": format_temperature_value(slot.get("max_temp")),
-                "平均溫度": format_temperature_value(slot.get("avg_temp")),
+                "溫度": format_temp_range(slot.get("min_temp"), slot.get("max_temp")),
+                "體感溫度": format_temperature_value(slot.get("apparent_temp")),
+                "降雨機率": format_percentage(slot.get("pop")),
+                "舒適度": slot.get("comfort") or "—",
             }
         )
     return pd.DataFrame(rows)
@@ -525,16 +533,19 @@ def build_details_dataframe(timeline: List[Dict[str, Any]]) -> pd.DataFrame:
 def render_slot_card(slot: Dict[str, Any]) -> str:
     icon = resolve_icon(slot)
     start = format_time(slot.get("startTime"))
+    end = format_time(slot.get("endTime"))
     weather = slot.get("weather") or "—"
     temp_range = format_temp_range(slot.get("min_temp"), slot.get("max_temp"))
-    avg = format_temperature_value(slot.get("avg_temp"))
+    pop = format_percentage(slot.get("pop"))
+    apparent = format_temperature_value(slot.get("apparent_temp"))
     return f"""
     <div class="weather-card">
-        <div style="font-size:0.9rem;color:var(--dashboard-muted, #475569);">{start}</div>
+        <div style="font-size:0.9rem;color:var(--dashboard-muted, #475569);">{start} – {end or '—'}</div>
         <div style="font-size:2rem;line-height:1;margin:0.2rem 0;">{icon}</div>
         <div style="font-weight:600;font-size:1.1rem;">{weather}</div>
         <div style="margin-top:0.3rem;">溫度：{temp_range}</div>
-        <div>平均：{avg}</div>
+        <div>體感：{apparent}</div>
+        <div>降雨機率：{pop}</div>
     </div>
     """
 
@@ -561,11 +572,15 @@ def format_temperature_value(value: Optional[float]) -> str:
     return f"{value:.1f}°C"
 
 
+def format_percentage(value: Optional[float]) -> str:
+    if value is None:
+        return "—"
+    return f"{round(value)}%"
+
+
 def format_time(value: Optional[datetime]) -> str:
     if not value:
         return "—"
-    if value.hour == 0 and value.minute == 0:
-        return value.strftime("%m/%d")
     return value.strftime("%m/%d %H:%M")
 
 
