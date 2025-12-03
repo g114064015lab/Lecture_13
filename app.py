@@ -5,6 +5,7 @@ from datetime import datetime
 from typing import Any, Dict, Iterable, List, Optional
 
 import altair as alt
+import certifi
 import pandas as pd
 import requests
 import streamlit as st
@@ -169,7 +170,12 @@ def fetch_forecast(api_key: str) -> Dict[str, Any]:
         "Authorization": api_key,
         "format": "JSON",
     }
-    response = requests.get(API_ENDPOINT, params=params, timeout=15)
+    response = requests.get(
+        API_ENDPOINT,
+        params=params,
+        timeout=15,
+        verify=certifi.where(),
+    )
     response.raise_for_status()
     data = response.json()
     if not data.get("success", False):
