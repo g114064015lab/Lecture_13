@@ -42,6 +42,7 @@
 - `CACHE_TTL_SECONDS = 900`：Streamlit 端減少重複解析。
 - SQLite `forecast_cache` 保留每次呼叫的完整 JSON，可離線重新載入或除錯。
 - 若即時 API 失敗，會自動載入資料庫最新一筆並顯示提醒。
+- 若 API 與 SQLite 資料皆不可用，系統會讀取專案內的 `F-A0021-001.json` 範例檔案，確保畫面仍有資料可參考。
 - 使用者按下「重新整理資料」會 `load_forecast_data.clear()`，迫使重新抓取。
 
 ## 6. 部署指引

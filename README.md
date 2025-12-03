@@ -40,6 +40,7 @@
 ├─app.py               # Streamlit 主程式：資料抓取、視覺化、互動控制
 ├─requirements.txt     # Python 依賴
 ├─data.db              # SQLite 快取（執行後自動建立）
+├─F-A0021-001.json     # 官方示例資料（API/快取皆無法使用時的備援）
 ├─README.md            # 使用與部署說明
 └─docs
    └─ARCHITECTURE.md   # 深入技術文件：模組、資料流與部署筆記
@@ -61,6 +62,7 @@
    ```bash
    sqlite3 data.db "SELECT dataset, fetched_at FROM forecast_cache ORDER BY id DESC LIMIT 5;"
    ```
+6. 若 API 與 SQLite 快取皆不可用，系統會載入專案根目錄的 `F-A0021-001.json` 作為預設示例預覽，確保畫面仍能展示內容。
 
 ## UI/UX 重點
 - H1 標題搭配資料發布時間與「重新整理資料」按鈕。

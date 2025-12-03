@@ -26,6 +26,7 @@ VERIFY_SSL = os.getenv("CWA_STRICT_SSL", "false").lower() == "true"
 if not VERIFY_SSL:
     requests.packages.urllib3.disable_warnings(category=InsecureRequestWarning)
 DB_PATH = Path("data.db")
+SAMPLE_JSON_PATH = Path(__file__).with_name("F-A0021-001.json")
 WEATHER_ICON_MAP = {
     "1": "☀️",
     "01": "☀️",
@@ -99,9 +100,12 @@ def main() -> None:
         st.stop()
 
     if dataset.get("notice"):
-        st.warning(f"即時資料取得失敗，顯示最後一次儲存資料：{dataset['notice']}")
-    elif dataset.get("source") == "cache":
+        st.warning(f"即時資料取得失敗，切換至備援資料：{dataset['notice']}")
+
+    if dataset.get("source") == "cache":
         st.info("顯示來自 SQLite 快取的資料")
+    elif dataset.get("source") == "sample":
+        st.info("顯示內建範例檔 F-A0021-001.json 的資料")
 
     issue_time = dataset.get("issue_time")
     if issue_time:
@@ -173,9 +177,11 @@ def load_forecast_data(api_key: str) -> Dict[str, Any]:
     payload, source, notice = retrieve_payload(api_key)
     locations = normalize_locations(payload)
     issue_time = infer_issue_time(locations)
+    dataset_type = determine_dataset_type(locations)
     return {
         "locations": locations,
         "issue_time": issue_time,
+        "dataset_type": dataset_type,
         "source": source,
         "notice": notice,
     }
@@ -206,9 +212,12 @@ def retrieve_payload(api_key: str) -> tuple[Dict[str, Any], str, Optional[str]]:
         payload = fetch_forecast(api_key)
     except Exception as exc:  # pylint: disable=broad-except
         cached = load_cached_payload()
-        if cached is None:
-            raise
-        return cached, "cache", str(exc)
+        if cached is not None:
+            return cached, "cache", str(exc)
+        sample = load_sample_payload()
+        if sample is not None:
+            return sample, "sample", str(exc)
+        raise
     persist_payload(payload)
     return payload, "live", None
 
@@ -249,15 +258,30 @@ def load_cached_payload() -> Optional[Dict[str, Any]]:
     return json.loads(row[0])
 
 
+def load_sample_payload() -> Optional[Dict[str, Any]]:
+    if SAMPLE_JSON_PATH.exists():
+        return json.loads(SAMPLE_JSON_PATH.read_text(encoding="utf-8"))
+    return None
+
+
 def normalize_locations(payload: Dict[str, Any]) -> List[Dict[str, Any]]:
-    records = payload.get("records", {})
+    records = payload.get("records", {}) if isinstance(payload, dict) else {}
     raw_locations = records.get("location", [])
-    normalized = []
+    normalized: List[Dict[str, Any]] = []
     for raw in raw_locations:
         normalized_location = parse_location(raw)
         if normalized_location["timeline"]:
             normalized.append(normalized_location)
-    return sorted(normalized, key=lambda item: item["name"])
+    if normalized:
+        return sorted(normalized, key=lambda item: item["name"])
+
+    tide_forecasts = extract_tide_forecasts(payload)
+    tide_locations: List[Dict[str, Any]] = []
+    for forecast in tide_forecasts:
+        parsed = parse_tide_location(forecast)
+        if parsed["timeline"]:
+            tide_locations.append(parsed)
+    return sorted(tide_locations, key=lambda item: item["name"])
 
 
 def parse_location(data: Dict[str, Any]) -> Dict[str, Any]:
@@ -276,6 +300,7 @@ def parse_location(data: Dict[str, Any]) -> Dict[str, Any]:
         "name": data.get("locationName", "未知地區"),
         "parameters": parameter_map,
         "timeline": timeline,
+        "category": "weather",
     }
 
 
@@ -300,6 +325,7 @@ def build_timeline(elements: Dict[str, List[Dict[str, Any]]]) -> List[Dict[str, 
             "max_temp": to_float(extract_value(get_element_entry(elements, idx, ["MaxT"]))),
             "apparent_temp": to_float(extract_value(get_element_entry(elements, idx, ["AT", "ApparentT"]))),
             "comfort": extract_text(get_element_entry(elements, idx, ["CI"])),
+            "unit": "°C",
         }
         temps = [temp for temp in [slot["min_temp"], slot["max_temp"]] if temp is not None]
         slot["avg_temp"] = sum(temps) / len(temps) if temps else None
@@ -348,6 +374,108 @@ def extract_text(block: Optional[Dict[str, Any]]) -> Optional[str]:
     return None
 
 
+def extract_tide_forecasts(payload: Dict[str, Any]) -> List[Dict[str, Any]]:
+    records = payload.get("records")
+    if isinstance(records, dict):
+        forecasts = records.get("TideForecasts")
+        if isinstance(forecasts, list):
+            return forecasts
+    cwa = payload.get("cwaopendata")
+    if isinstance(cwa, dict):
+        resources = cwa.get("Resources") or cwa.get("resources") or {}
+        resource = resources.get("Resource") or resources.get("resource")
+        if isinstance(resource, list):
+            resource = resource[0]
+        data = (resource or {}).get("Data") or (resource or {}).get("data")
+        forecasts = data.get("TideForecasts") if isinstance(data, dict) else None
+        if isinstance(forecasts, list):
+            return forecasts
+    return []
+
+
+def parse_tide_location(forecast: Dict[str, Any]) -> Dict[str, Any]:
+    location = forecast.get("Location") or {}
+    daily_periods = (
+        (location.get("TimePeriods") or {}).get("Daily") or []
+    )
+    timeline = build_tide_timeline(daily_periods)
+    return {
+        "name": location.get("LocationName", "未知地區"),
+        "parameters": {
+            "LocationId": location.get("LocationId"),
+            "Latitude": location.get("Latitude"),
+            "Longitude": location.get("Longitude"),
+        },
+        "timeline": timeline,
+        "category": "tide",
+    }
+
+
+def build_tide_timeline(daily_periods: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    timeline: List[Dict[str, Any]] = []
+    for daily in daily_periods[:3]:
+        times = daily.get("Time") or []
+        if not times:
+            continue
+        start_time = parse_time(times[0].get("DateTime"))
+        end_time = parse_time(times[-1].get("DateTime"))
+        heights = []
+        for entry in times:
+            tide_heights = entry.get("TideHeights") or {}
+            heights.append(to_float(tide_heights.get("AboveTWVD")))
+        heights = [h for h in heights if h is not None]
+        min_height = convert_height_to_meters(min(heights)) if heights else None
+        max_height = convert_height_to_meters(max(heights)) if heights else None
+        avg_height = (
+            convert_height_to_meters(sum(heights) / len(heights))
+            if heights
+            else None
+        )
+        slot = {
+            "startTime": start_time,
+            "endTime": end_time,
+            "weather": f"{daily.get('TideRange', '')}潮",
+            "weather_code": None,
+            "pop": tide_range_to_probability(daily.get("TideRange")),
+            "min_temp": min_height,
+            "max_temp": max_height,
+            "apparent_temp": avg_height,
+            "comfort": describe_daily_tide(times),
+            "unit": "m",
+        }
+        temps = [temp for temp in [min_height, max_height] if temp is not None]
+        slot["avg_temp"] = sum(temps) / len(temps) if temps else avg_height
+        timeline.append(slot)
+    return timeline
+
+
+def convert_height_to_meters(value: Optional[float]) -> Optional[float]:
+    if value is None:
+        return None
+    return value / 100  # convert centimeters to meters
+
+
+def tide_range_to_probability(tide_range: Optional[str]) -> Optional[float]:
+    if tide_range is None:
+        return None
+    mapping = {
+        "大": 90,
+        "中": 60,
+        "小": 30,
+    }
+    return mapping.get(tide_range.strip())
+
+
+def describe_daily_tide(events: List[Dict[str, Any]]) -> str:
+    descriptions = []
+    for entry in events[:3]:
+        timestamp = parse_time(entry.get("DateTime"))
+        tide = entry.get("Tide")
+        if timestamp and tide:
+            descriptions.append(f"{timestamp.strftime('%H:%M')}{tide}")
+    return "、".join(descriptions) if descriptions else "—"
+
+
 def to_float(value: Optional[str]) -> Optional[float]:
     if value is None:
         return None
@@ -380,6 +508,16 @@ def infer_issue_time(locations: List[Dict[str, Any]]) -> Optional[datetime]:
         if slot.get("startTime")
     ]
     return min(times) if times else None
+
+
+def determine_dataset_type(locations: List[Dict[str, Any]]) -> str:
+    if not locations:
+        return "unknown"
+    if all(location.get("category") == "tide" for location in locations):
+        return "tide"
+    if all(location.get("category") == "weather" for location in locations):
+        return "weather"
+    return "mixed"
 
 
 def render_location_selector(locations: List[Dict[str, Any]]) -> Dict[str, Any]:
@@ -421,8 +559,8 @@ def render_location_selector(locations: List[Dict[str, Any]]) -> Dict[str, Any]:
         column_config={
             "地區": st.column_config.Column("地區"),
             "天氣": st.column_config.Column("天氣"),
-            "溫度": st.column_config.Column("溫度"),
-            "降雨機率": st.column_config.Column("降雨機率"),
+            "指標值": st.column_config.Column("潮高/溫度"),
+            "指標(%)": st.column_config.Column("概率指標"),
         },
     )
     return filtered[selected_idx]
@@ -444,49 +582,70 @@ def build_overview_dataframe(locations: List[Dict[str, Any]]) -> pd.DataFrame:
             {
                 "地區": loc["name"],
                 "天氣": f"{resolve_icon(slot)} {slot.get('weather') or '—'}",
-                "溫度": format_temperature(slot),
-                "降雨機率": format_percentage(slot.get("pop")),
+                "指標值": format_temperature(slot),
+                "指標(%)": format_percentage(slot.get("pop")),
             }
         )
     return pd.DataFrame(rows)
 
 
 def render_location_details(location: Dict[str, Any]) -> None:
-    st.subheader(f"{location['name']} 詳細預報")
+    is_tide = location.get("category") == "tide"
+    title_suffix = "潮汐預報" if is_tide else "詳細預報"
+    st.subheader(f"{location['name']} {title_suffix}")
     timeline = location["timeline"]
     if not timeline:
         st.warning("此地區暫無時間序列資料")
         return
     current_slot = timeline[0]
     metrics = st.columns(4)
-    with metrics[0]:
-        st.metric("平均溫度", format_temperature(current_slot))
-    with metrics[1]:
-        st.metric("體感溫度", format_temperature_value(current_slot.get("apparent_temp")))
-    with metrics[2]:
-        st.metric("降雨機率", format_percentage(current_slot.get("pop")))
-    with metrics[3]:
-        st.metric("舒適度", current_slot.get("comfort") or "—")
+    unit = current_slot.get("unit", "°C")
+    if is_tide:
+        with metrics[0]:
+            st.metric("平均潮高", format_temperature_value(current_slot.get("avg_temp"), unit))
+        with metrics[1]:
+            st.metric("最大潮高", format_temperature_value(current_slot.get("max_temp"), unit))
+        with metrics[2]:
+            st.metric("最小潮高", format_temperature_value(current_slot.get("min_temp"), unit))
+        with metrics[3]:
+            st.metric("潮汐強度", current_slot.get("weather") or current_slot.get("comfort") or "—")
+    else:
+        with metrics[0]:
+            st.metric("平均溫度", format_temperature_value(current_slot.get("avg_temp"), unit))
+        with metrics[1]:
+            st.metric("體感溫度", format_temperature_value(current_slot.get("apparent_temp"), unit))
+        with metrics[2]:
+            st.metric("降雨機率", format_percentage(current_slot.get("pop")))
+        with metrics[3]:
+            st.metric("舒適度", current_slot.get("comfort") or "—")
 
-    st.markdown("#### 36 小時時段卡片")
+    section_title = "潮汐卡片 (近 3 日)" if is_tide else "36 小時時段卡片"
+    st.markdown(f"#### {section_title}")
     card_cols = st.columns(len(timeline))
     for col, slot in zip(card_cols, timeline):
         with col:
-            st.markdown(render_slot_card(slot), unsafe_allow_html=True)
+            st.markdown(render_slot_card(slot, is_tide), unsafe_allow_html=True)
 
-    chart_df = build_chart_dataframe(timeline)
+    chart_df = build_chart_dataframe(timeline, "tide" if is_tide else "weather")
     if not chart_df.empty:
-        st.markdown("#### 溫度 vs. 體感溫度")
+        chart_title = "潮高趨勢" if is_tide else "溫度 vs. 體感溫度"
+        fold_fields = (
+            ["平均潮高", "最大潮高"]
+            if is_tide
+            else ["平均溫度", "體感溫度"]
+        )
+        y_title = "m" if is_tide else "°C"
+        st.markdown(f"#### {chart_title}")
         chart = (
             alt.Chart(chart_df)
             .transform_fold(
-                ["平均溫度", "體感溫度"],
+                fold_fields,
                 as_=["類型", "溫度"],
             )
             .mark_line(point=True)
             .encode(
                 x=alt.X("時間:T", axis=alt.Axis(format="%m/%d %H:%M")),
-                y=alt.Y("溫度:Q", title="°C"),
+                y=alt.Y("溫度:Q", title=y_title),
                 color="類型:N",
                 tooltip=["時間:T", "類型:N", "溫度:Q"],
             )
@@ -494,7 +653,7 @@ def render_location_details(location: Dict[str, Any]) -> None:
         st.altair_chart(chart, use_container_width=True)
 
     st.markdown("#### 詳細資料")
-    table_df = build_details_dataframe(timeline)
+    table_df = build_details_dataframe(timeline, "tide" if is_tide else "weather")
     st.dataframe(
         table_df,
         hide_index=True,
@@ -502,78 +661,94 @@ def render_location_details(location: Dict[str, Any]) -> None:
     )
 
 
-def build_chart_dataframe(timeline: List[Dict[str, Any]]) -> pd.DataFrame:
+def build_chart_dataframe(timeline: List[Dict[str, Any]], dataset_type: str) -> pd.DataFrame:
     rows = []
     for slot in timeline:
-        if slot.get("avg_temp") is None and slot.get("apparent_temp") is None:
-            continue
-        rows.append(
-            {
-                "時間": slot["startTime"],
-                "平均溫度": slot.get("avg_temp"),
-                "體感溫度": slot.get("apparent_temp"),
-            }
-        )
+        if dataset_type == "tide":
+            if slot.get("avg_temp") is None and slot.get("max_temp") is None:
+                continue
+            rows.append(
+                {
+                    "時間": slot["startTime"],
+                    "平均潮高": slot.get("avg_temp"),
+                    "最大潮高": slot.get("max_temp"),
+                }
+            )
+        else:
+            if slot.get("avg_temp") is None and slot.get("apparent_temp") is None:
+                continue
+            rows.append(
+                {
+                    "時間": slot["startTime"],
+                    "平均溫度": slot.get("avg_temp"),
+                    "體感溫度": slot.get("apparent_temp"),
+                }
+            )
     return pd.DataFrame(rows)
 
 
-def build_details_dataframe(timeline: List[Dict[str, Any]]) -> pd.DataFrame:
+def build_details_dataframe(timeline: List[Dict[str, Any]], dataset_type: str) -> pd.DataFrame:
     rows = []
     for slot in timeline:
-        rows.append(
-            {
-                "起始": format_time(slot.get("startTime")),
-                "結束": format_time(slot.get("endTime")),
-                "天氣": f"{resolve_icon(slot)} {slot.get('weather') or '—'}",
-                "溫度": format_temp_range(slot.get("min_temp"), slot.get("max_temp")),
-                "體感溫度": format_temperature_value(slot.get("apparent_temp")),
-                "降雨機率": format_percentage(slot.get("pop")),
-                "舒適度": slot.get("comfort") or "—",
-            }
-        )
+        entry = {
+            "起始": format_time(slot.get("startTime")),
+            "結束": format_time(slot.get("endTime")),
+            "描述": f"{resolve_icon(slot)} {slot.get('weather') or '—'}",
+            "指標值": format_temperature(slot),
+            "補充": slot.get("comfort") or "—",
+        }
+        if dataset_type == "tide":
+            entry["潮汐強度(%)"] = format_percentage(slot.get("pop"))
+        else:
+            entry["體感/降雨"] = f"{format_temperature_value(slot.get('apparent_temp'))} / {format_percentage(slot.get('pop'))}"
+        rows.append(entry)
     return pd.DataFrame(rows)
 
 
-def render_slot_card(slot: Dict[str, Any]) -> str:
+def render_slot_card(slot: Dict[str, Any], is_tide: bool) -> str:
     icon = resolve_icon(slot)
     start = format_time(slot.get("startTime"))
     end = format_time(slot.get("endTime"))
     weather = slot.get("weather") or "—"
-    temp_range = format_temp_range(slot.get("min_temp"), slot.get("max_temp"))
+    temp_range = format_temperature(slot)
     pop = format_percentage(slot.get("pop"))
-    apparent = format_temperature_value(slot.get("apparent_temp"))
+    apparent = format_temperature_value(slot.get("apparent_temp"), slot.get("unit", "°C"))
+    second_line = "平均潮高" if is_tide else "體感"
+    third_line = "潮汐指標" if is_tide else "降雨機率"
+    metric_label = "潮高" if is_tide else "溫度"
     return f"""
     <div class="weather-card">
         <div style="font-size:0.9rem;color:var(--dashboard-muted, #475569);">{start} – {end or '—'}</div>
         <div style="font-size:2rem;line-height:1;margin:0.2rem 0;">{icon}</div>
         <div style="font-weight:600;font-size:1.1rem;">{weather}</div>
-        <div style="margin-top:0.3rem;">溫度：{temp_range}</div>
-        <div>體感：{apparent}</div>
-        <div>降雨機率：{pop}</div>
+        <div style="margin-top:0.3rem;">{metric_label}：{temp_range}</div>
+        <div>{second_line}：{apparent}</div>
+        <div>{third_line}：{pop}</div>
     </div>
     """
 
 
 def format_temperature(slot: Dict[str, Any]) -> str:
-    return format_temp_range(slot.get("min_temp"), slot.get("max_temp"))
+    unit = slot.get("unit", "°C")
+    return format_temp_range(slot.get("min_temp"), slot.get("max_temp"), unit)
 
 
-def format_temp_range(min_temp: Optional[float], max_temp: Optional[float]) -> str:
+def format_temp_range(min_temp: Optional[float], max_temp: Optional[float], unit: str = "°C") -> str:
     if min_temp is None and max_temp is None:
         return "—"
     if min_temp is None:
-        return f"{max_temp:.1f}°C"
+        return f"{max_temp:.1f}{unit}"
     if max_temp is None:
-        return f"{min_temp:.1f}°C"
+        return f"{min_temp:.1f}{unit}"
     if abs(max_temp - min_temp) < 0.1:
-        return f"{(min_temp + max_temp) / 2:.1f}°C"
-    return f"{min_temp:.1f}°C ~ {max_temp:.1f}°C"
+        return f"{(min_temp + max_temp) / 2:.1f}{unit}"
+    return f"{min_temp:.1f}{unit} ~ {max_temp:.1f}{unit}"
 
 
-def format_temperature_value(value: Optional[float]) -> str:
+def format_temperature_value(value: Optional[float], unit: str = "°C") -> str:
     if value is None:
         return "—"
-    return f"{value:.1f}°C"
+    return f"{value:.1f}{unit}"
 
 
 def format_percentage(value: Optional[float]) -> str:
@@ -597,6 +772,8 @@ def resolve_icon(slot: Dict[str, Any]) -> str:
         if code in WEATHER_ICON_MAP:
             return WEATHER_ICON_MAP[code]
     text = (slot.get("weather") or "").strip()
+    if "潮" in text:
+        return "🌊"
     if "雷" in text:
         return "⛈️"
     if "雨" in text:
