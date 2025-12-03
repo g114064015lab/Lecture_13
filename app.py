@@ -13,6 +13,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 API_ENDPOINT = "https://opendata.cwa.gov.tw/api/v1/rest/datastore/F-A0021-001"
+CACHED_FALLBACK_API_KEY = "CWA-FE3705DB-3102-48DE-B396-30F5D45306C2"
 CACHE_TTL_SECONDS = 60 * 15
 DEFAULT_LOCATION = os.getenv("CWA_DEFAULT_LOCATION", "臺北市")
 WEATHER_ICON_MAP = {
@@ -48,7 +49,7 @@ def main() -> None:
         initial_sidebar_state="collapsed",
     )
 
-    api_key = os.getenv("CWA-FE3705DB-3102-48DE-B396-30F5D45306C2")
+    api_key = (os.getenv("CWA_API_KEY") or CACHED_FALLBACK_API_KEY).strip()
     if not api_key:
         st.error("請在環境變數或 `.env` 檔中設定 `CWA_API_KEY` 以取得資料。")
         st.stop()
