@@ -3,51 +3,51 @@
 此文件整理 Streamlit 儀表板的技術面向：資料來源、程式模組、UI 組件、快取策略與部署流程，協助後續維護與新功能開發。
 
 ## 1. 系統概觀
-1. 使用者開啟 Streamlit 頁面後，`app.py` 會載入 `.env`，檢查必填的 `CWA_API_KEY`。
-2. 呼叫 `load_forecast_data`（包裝於 `st.cache_data`）從中央氣象署 REST API 抓取 JSON。
-3. 將原始資料轉換為 `location -> timeline` 的結構，供卡片、指標與視覺化元件共用。
-4. 左欄提供縣市列表與搜尋功能，右欄顯示詳情（指標、卡片、折線圖、表格）。
+1. 使用者開啟 Streamlit 頁面後，`app.py` 會載入 `.env`，確認 `CWA_API_KEY`（預設可為官方提供的測試金鑰）。
+2. `load_forecast_data`（以 `st.cache_data` 快取）呼叫中央氣象署 F-A0010-001 檔案 API（`downloadType=WEB&format=JSON`）。
+3. 每筆回傳完整儲存到 SQLite `data.db`，再解析為 `location -> daily timeline` 結構，供卡片與圖表共用。
+4. 左欄提供地區列表、搜尋與排序；右欄顯示 7 日詳細預報（指標、卡片、折線圖、表格）與天氣概況。
 
 ## 2. 模組分工
 | 區塊 | 函式/模組 | 說明 |
 | --- | --- | --- |
 | 入口 | `main()` | 初始化頁面、處理佈局與互動按鈕。 |
 | 主題設定 | `initialize_theme_state`, `apply_theme` | 控制深/淺色模式、CSS 變數。 |
-| 資料快取 | `load_forecast_data` | 封裝資料抓取 + 正規化；TTL 15 分鐘。 |
-| API 呼叫 | `fetch_forecast` | 向 `https://opendata.cwa.gov.tw/api/v1/rest/datastore/F-A0021-001` 發送 GET 請求。 |
-| 正規化 | `normalize_locations`, `parse_location`, `build_timeline` | 將氣象元素（MinT、MaxT、Wx、PoP...）組成統一時間軸。 |
+| 資料快取 | `load_forecast_data`, `retrieve_payload` | 管理 API 呼叫＋SQLite 快取＋15 分鐘解析快取。 |
+| API 呼叫 | `fetch_forecast` | 向 `https://opendata.cwa.gov.tw/fileapi/v1/opendataapi/F-A0010-001` 發送 GET 請求（downloadType=WEB）。 |
+| 正規化 | `normalize_locations`, `build_timeline` | 將 `weatherElements` 內的 `Wx`, `MinT`, `MaxT` 合併為每日資料。 |
 | UI：左欄 | `render_location_selector` | 搜尋、單選、概覽表格。 |
 | UI：右欄 | `render_location_details` | 指標卡、時段卡、Altair 圖、詳細表格。 |
 | 視覺化 | `build_chart_dataframe` 等 | 將時間序列轉成 Pandas DataFrame。 |
 
 ## 3. API 欄位對應
-- `Wx` / `WeatherDescription` → 天氣描述與現象碼（搭配 `WEATHER_ICON_MAP`）。
-- `PoP` / `PoP12h` → 降雨機率（採整數百分比）。
-- `MinT` / `MaxT` → 12 小時時段的最低/最高溫度。
-- `AT` / `ApparentT` → 體感溫度。
-- `CI` → 舒適度指標文字。
-- `startTime` / `endTime` → 每個時段的起迄時間（36 小時含 3 個時段）。
+- `weatherElements.Wx.daily` → `dataDate`, `weather`, `weatherid`（搭配 `WEATHER_ICON_MAP`）。
+- `weatherElements.MinT.daily` → `temperature`（最低溫）。
+- `weatherElements.MaxT.daily` → `temperature`（最高溫）。
+- `metadata.temporal.issueTime` → 發布時間，顯示於頁面 caption。
+- `agrWeatherForecasts.weatherProfile` → 全域天氣概況，顯示於頁面上方。
 
-若 API 變更欄位，只需在 `build_timeline` 中調整候選名稱或解析邏輯即可。
+若 API 結構調整，只需於 `build_timeline` 或 `extract_*` 系列函式更新對應欄位即可。
 
 ## 4. UI 與互動
-1. **頂部列**：標題、主題切換、資料更新時間、重新整理按鈕。
-2. **縣市列表**：`st.radio` + `st.dataframe` 呈現，支援模糊搜尋與預設地區 (`CWA_DEFAULT_LOCATION`)。
-3. **指標卡**：採 `st.metric` 顯示平均溫度、體感溫度、降雨機率、舒適度。
-4. **時段卡**：以自訂 HTML/CSS 呈現圖示、溫度區間與降雨機率。
-5. **折線圖**：使用 Altair 繪製平均溫度 vs 體感溫度；支援 Tooltip。
-6. **詳細表格**：列出 36 小時內所有欄位，方便導出或比對。
+1. **頂部列**：標題、主題切換、資料發布時間、天氣概況、重新整理按鈕。
+2. **地區列表**：`st.radio` + `st.dataframe` 呈現，支援模糊搜尋與預設地區 (`CWA_DEFAULT_LOCATION`)。
+3. **指標卡**：使用 `st.metric` 顯示當日高溫、低溫、平均溫與天氣現象。
+4. **日別卡片**：自訂 HTML 呈現圖示與溫度範圍，方便截圖或分享。
+5. **折線圖**：Altair 折線圖比較 7 日的最高／最低／平均溫度。
+6. **詳細表格**：列出每日日期、天氣描述、高低溫與平均溫度。
 
 ## 5. 快取與錯誤處理
-- `CACHE_TTL_SECONDS = 900`：減少 API 呼叫，同時保證資料不會太舊。
-- 使用者按下「重新整理資料」會呼叫 `load_forecast_data.clear()` 重置快取。
-- HTTP 錯誤、授權失敗或 JSON 結構異常時會以 `st.error` 顯示訊息並停止執行，避免畫面殘缺。
+- `CACHE_TTL_SECONDS = 900`：Streamlit 端減少重複解析。
+- SQLite `forecast_cache` 保留每次呼叫的完整 JSON，可離線重新載入或除錯。
+- 若即時 API 失敗，會自動載入資料庫最新一筆並顯示提醒。
+- 使用者按下「重新整理資料」會 `load_forecast_data.clear()`，迫使重新抓取。
 
 ## 6. 部署指引
 ### 本地開發
 1. 建立虛擬環境，安裝 `requirements.txt`。
-2. 將 `.env`（或系統環境變數）設定 `CWA_API_KEY`、`CWA_DEFAULT_LOCATION`。
-3. `streamlit run app.py`。
+2. 設定 `.env`（或環境變數）`CWA_API_KEY`、`CWA_DEFAULT_LOCATION`（預設 `北部地區`）。
+3. `streamlit run app.py`，即會在專案根目錄產生 `data.db`，可用 `sqlite3 data.db` 檢視快取。
 
 ### Streamlit Community Cloud
 1. Fork/Push 此專案到 GitHub。
