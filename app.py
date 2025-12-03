@@ -48,7 +48,7 @@ def main() -> None:
         initial_sidebar_state="collapsed",
     )
 
-    api_key = os.getenv("CWA_API_KEY")
+    api_key = os.getenv("CWA-FE3705DB-3102-48DE-B396-30F5D45306C2")
     if not api_key:
         st.error("請在環境變數或 `.env` 檔中設定 `CWA_API_KEY` 以取得資料。")
         st.stop()
