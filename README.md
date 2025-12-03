@@ -73,6 +73,7 @@
 | --- | --- | --- |
 | `CWA_API_KEY` | CWA-FE3705DB-3102-48DE-B396-30F5D45306C2 | 預設使用此金鑰，可自行於 `.env` 覆寫 |
 | `CWA_DEFAULT_LOCATION` | 臺北市 | 選擇頁面載入時預設顯示的縣市 |
+| `CWA_STRICT_SSL` | false | 設為 `true` 可強制使用 CA 驗證；若因憑證缺少 SKI 導致 SSL 失敗，可維持預設 `false` 來忽略驗證 |
 
 ## 開發提示
 - `app.py` 為主要入口，整合資料抓取、快取與 UI 邏輯，可依需求拆分模組。

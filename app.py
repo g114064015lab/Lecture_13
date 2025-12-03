@@ -13,6 +13,7 @@ import pandas as pd
 import requests
 import streamlit as st
 from dotenv import load_dotenv
+from requests.packages.urllib3.exceptions import InsecureRequestWarning
 
 load_dotenv()
 
@@ -21,6 +22,9 @@ DATASET_ID = "F-A0021-001"
 CACHED_FALLBACK_API_KEY = "CWA-FE3705DB-3102-48DE-B396-30F5D45306C2"
 CACHE_TTL_SECONDS = 60 * 15
 DEFAULT_LOCATION = os.getenv("CWA_DEFAULT_LOCATION", "臺北市")
+VERIFY_SSL = os.getenv("CWA_STRICT_SSL", "false").lower() == "true"
+if not VERIFY_SSL:
+    requests.packages.urllib3.disable_warnings(category=InsecureRequestWarning)
 DB_PATH = Path("data.db")
 WEATHER_ICON_MAP = {
     "1": "☀️",
@@ -186,7 +190,7 @@ def fetch_forecast(api_key: str) -> Dict[str, Any]:
         API_ENDPOINT,
         params=params,
         timeout=15,
-        verify=certifi.where(),
+        verify=certifi.where() if VERIFY_SSL else False,
     )
     response.raise_for_status()
     data = response.json()
