@@ -543,11 +543,10 @@ def render_location_selector(locations: List[Dict[str, Any]]) -> Dict[str, Any]:
             default_index = idx
             break
     default_index = min(default_index, len(filtered) - 1)
-    selected_idx = st.radio(
+    selected_idx = st.selectbox(
         "選擇縣市",
         options=indices,
         index=default_index,
-        label_visibility="collapsed",
         format_func=lambda idx: format_location_label(filtered[idx]),
     )
 
