@@ -657,7 +657,21 @@ def render_overview_map(locations: List[Dict[str, Any]]) -> None:
         "case",
         ["==", ["get", "category"], "tide"],
         [0, 122, 255, 180],
-        [255, 115, 0, 180],
+        [
+            "interpolate",
+            ["linear"],
+            ["coalesce", ["get", "value"], 0],
+            0,
+            [56, 189, 248, 180],
+            15,
+            [74, 222, 128, 180],
+            25,
+            [250, 204, 21, 180],
+            35,
+            [248, 113, 113, 180],
+            40,
+            [239, 68, 68, 200],
+        ],
     ]
     layer = pdk.Layer(
         "ScatterplotLayer",
@@ -687,7 +701,38 @@ def render_overview_map(locations: List[Dict[str, Any]]) -> None:
         tooltip={"text": "{name}\n指標: {value}"},
     )
     st.markdown("### 臺灣概覽")
-    st.pydeck_chart(deck, use_container_width=True)
+    map_col, legend_col = st.columns([4, 1])
+    with map_col:
+        st.pydeck_chart(deck, use_container_width=True)
+    with legend_col:
+        st.markdown(
+            """
+            <div style="padding:0.5rem 0;">
+              <div style="font-weight:600;margin-bottom:0.25rem;">顏色圖例</div>
+              <div style="display:flex;align-items:center;margin-bottom:6px;">
+                <span style="display:inline-block;width:14px;height:14px;background:#007AFF;border-radius:4px;margin-right:6px;"></span>
+                <span>潮汐點位</span>
+              </div>
+              <div style="display:flex;align-items:center;margin-bottom:6px;">
+                <span style="display:inline-block;width:14px;height:14px;background:#38BDF8;border-radius:4px;margin-right:6px;"></span>
+                <span>溫度 < 15°C</span>
+              </div>
+              <div style="display:flex;align-items:center;margin-bottom:6px;">
+                <span style="display:inline-block;width:14px;height:14px;background:#4ADE80;border-radius:4px;margin-right:6px;"></span>
+                <span>15–25°C</span>
+              </div>
+              <div style="display:flex;align-items:center;margin-bottom:6px;">
+                <span style="display:inline-block;width:14px;height:14px;background:#FACC15;border-radius:4px;margin-right:6px;"></span>
+                <span>25–35°C</span>
+              </div>
+              <div style="display:flex;align-items:center;">
+                <span style="display:inline-block;width:14px;height:14px;background:#EF4444;border-radius:4px;margin-right:6px;"></span>
+                <span>＞ 35°C</span>
+              </div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
 
 
 def render_location_details(location: Dict[str, Any]) -> None:
