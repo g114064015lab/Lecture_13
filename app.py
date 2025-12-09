@@ -115,6 +115,14 @@ def main() -> None:
     render_overview_map(locations)
 
     st.markdown("---")
+    tide_locations = [loc for loc in locations if loc.get("category") == "tide"]
+    if tide_locations:
+        st.markdown("## 潮汐卡片 (近 3 日)")
+        card_cols = st.columns(len(tide_locations))
+        for col, loc in zip(card_cols, tide_locations):
+            slot = loc["timeline"][0]
+            col.markdown(render_slot_card(slot, True), unsafe_allow_html=True)
+
     left_col, right_col = st.columns([1, 1.8], gap="large")
     with left_col:
         selected_location = render_location_selector(locations)
@@ -666,6 +674,7 @@ def render_overview_map(locations: List[Dict[str, Any]]) -> None:
         )
     if not points:
         return
+    # 圈圈顏色依照潮汐強度或溫度分級
     layer = pdk.Layer(
         "ScatterplotLayer",
         data=points,
