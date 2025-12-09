@@ -112,6 +112,8 @@ def main() -> None:
     if issue_time:
         st.caption(f"資料發布時間：{issue_time.strftime('%Y-%m-%d %H:%M')} (臺北時間)")
 
+    render_overview_map(locations)
+
     left_col, right_col = st.columns([1.1, 2.1], gap="large")
     with left_col:
         selected_location = render_location_selector(locations)
@@ -629,6 +631,62 @@ def render_location_map(location: Dict[str, Any]) -> None:
         layers=[tile_layer, layer],
         tooltip={"text": "{name}\n指標: {value}"},
     )
+    st.pydeck_chart(deck, use_container_width=True)
+
+
+def render_overview_map(locations: List[Dict[str, Any]]) -> None:
+    points = []
+    for loc in locations:
+        lat = to_float(loc.get("parameters", {}).get("Latitude"))
+        lon = to_float(loc.get("parameters", {}).get("Longitude"))
+        if lat is None or lon is None:
+            continue
+        slot = loc["timeline"][0]
+        points.append(
+            {
+                "lat": lat,
+                "lon": lon,
+                "name": loc["name"],
+                "value": slot.get("avg_temp"),
+                "category": loc.get("category", "weather"),
+            }
+        )
+    if not points:
+        return
+    color_expr = [
+        "case",
+        ["==", ["get", "category"], "tide"],
+        [0, 122, 255, 180],
+        [255, 115, 0, 180],
+    ]
+    layer = pdk.Layer(
+        "ScatterplotLayer",
+        data=points,
+        get_position="[lon, lat]",
+        get_fill_color=color_expr,
+        get_radius=12000,
+        pickable=True,
+    )
+    tile_layer = pdk.Layer(
+        "TileLayer",
+        data="https://basemaps.cartocdn.com/light_all/{z}/{x}/{y}.png",
+        min_zoom=0,
+        max_zoom=19,
+        tile_size=256,
+    )
+    view_state = pdk.ViewState(
+        latitude=23.6978,
+        longitude=120.9605,
+        zoom=6,
+        pitch=0,
+    )
+    deck = pdk.Deck(
+        map_style=None,
+        initial_view_state=view_state,
+        layers=[tile_layer, layer],
+        tooltip={"text": "{name}\n指標: {value}"},
+    )
+    st.markdown("### 臺灣概覽")
     st.pydeck_chart(deck, use_container_width=True)
 
 
