@@ -114,7 +114,8 @@ def main() -> None:
 
     render_overview_map(locations)
 
-    left_col, right_col = st.columns([1.1, 2.1], gap="large")
+    st.markdown("---")
+    left_col, right_col = st.columns([1, 1.8], gap="large")
     with left_col:
         selected_location = render_location_selector(locations)
     with right_col:
@@ -597,6 +598,7 @@ def render_location_map(location: Dict[str, Any]) -> None:
     lon = to_float(location.get("parameters", {}).get("Longitude"))
     center_lat, center_lon = (lat, lon) if lat and lon else (23.6978, 120.9605)
     zoom = 9 if lat and lon else 6
+    point_color = get_point_color(location["timeline"][0].get("avg_temp"), location.get("category"))
     layer = pdk.Layer(
         "ScatterplotLayer",
         data=[
@@ -605,10 +607,12 @@ def render_location_map(location: Dict[str, Any]) -> None:
                 "lon": center_lon,
                 "name": location["name"],
                 "value": location["timeline"][0].get("avg_temp"),
+                "color": point_color,
             }
         ],
         get_position="[lon, lat]",
-        get_fill_color="[0, 122, 255, 180]",
+        get_fill_color="color",
+        get_line_color="color",
         get_radius=15000,
         pickable=True,
     )
@@ -642,6 +646,7 @@ def render_overview_map(locations: List[Dict[str, Any]]) -> None:
         if lat is None or lon is None:
             continue
         slot = loc["timeline"][0]
+        color = get_point_color(slot.get("avg_temp"), loc.get("category"))
         points.append(
             {
                 "lat": lat,
@@ -649,35 +654,17 @@ def render_overview_map(locations: List[Dict[str, Any]]) -> None:
                 "name": loc["name"],
                 "value": slot.get("avg_temp"),
                 "category": loc.get("category", "weather"),
+                "color": color,
             }
         )
     if not points:
         return
-    color_expr = [
-        "case",
-        ["==", ["get", "category"], "tide"],
-        [0, 122, 255, 180],
-        [
-            "interpolate",
-            ["linear"],
-            ["coalesce", ["get", "value"], 0],
-            0,
-            [56, 189, 248, 180],
-            15,
-            [74, 222, 128, 180],
-            25,
-            [250, 204, 21, 180],
-            35,
-            [248, 113, 113, 180],
-            40,
-            [239, 68, 68, 200],
-        ],
-    ]
     layer = pdk.Layer(
         "ScatterplotLayer",
         data=points,
         get_position="[lon, lat]",
-        get_fill_color=color_expr,
+        get_fill_color="color",
+        get_line_color="color",
         get_radius=12000,
         pickable=True,
     )
@@ -733,6 +720,22 @@ def render_overview_map(locations: List[Dict[str, Any]]) -> None:
             """,
             unsafe_allow_html=True,
         )
+
+
+def get_point_color(value: Optional[float], category: Optional[str]) -> List[int]:
+    if category == "tide":
+        return [0, 122, 255, 180]
+    if value is None:
+        return [180, 180, 180, 160]
+    if value < 15:
+        return [56, 189, 248, 180]
+    if value < 25:
+        return [74, 222, 128, 180]
+    if value < 35:
+        return [250, 204, 21, 180]
+    if value < 40:
+        return [248, 113, 113, 200]
+    return [239, 68, 68, 220]
 
 
 def render_location_details(location: Dict[str, Any]) -> None:
