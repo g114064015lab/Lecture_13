@@ -11,6 +11,7 @@ import altair as alt
 import certifi
 import pandas as pd
 import requests
+import pydeck as pdk
 import streamlit as st
 from dotenv import load_dotenv
 from requests.packages.urllib3.exceptions import InsecureRequestWarning
@@ -115,6 +116,7 @@ def main() -> None:
     with left_col:
         selected_location = render_location_selector(locations)
     with right_col:
+        render_location_map(selected_location)
         render_location_details(selected_location)
 
 
@@ -586,6 +588,48 @@ def build_overview_dataframe(locations: List[Dict[str, Any]]) -> pd.DataFrame:
             }
         )
     return pd.DataFrame(rows)
+
+
+def render_location_map(location: Dict[str, Any]) -> None:
+    lat = to_float(location.get("parameters", {}).get("Latitude"))
+    lon = to_float(location.get("parameters", {}).get("Longitude"))
+    center_lat, center_lon = (lat, lon) if lat and lon else (23.6978, 120.9605)
+    zoom = 9 if lat and lon else 6
+    layer = pdk.Layer(
+        "ScatterplotLayer",
+        data=[
+            {
+                "lat": center_lat,
+                "lon": center_lon,
+                "name": location["name"],
+                "value": location["timeline"][0].get("avg_temp"),
+            }
+        ],
+        get_position="[lon, lat]",
+        get_fill_color="[0, 122, 255, 180]",
+        get_radius=15000,
+        pickable=True,
+    )
+    tile_layer = pdk.Layer(
+        "TileLayer",
+        data="https://basemaps.cartocdn.com/light_all/{z}/{x}/{y}.png",
+        min_zoom=0,
+        max_zoom=19,
+        tile_size=256,
+    )
+    view_state = pdk.ViewState(
+        latitude=center_lat,
+        longitude=center_lon,
+        zoom=zoom,
+        pitch=30,
+    )
+    deck = pdk.Deck(
+        map_style=None,
+        initial_view_state=view_state,
+        layers=[tile_layer, layer],
+        tooltip={"text": "{name}\n指標: {value}"},
+    )
+    st.pydeck_chart(deck, use_container_width=True)
 
 
 def render_location_details(location: Dict[str, Any]) -> None:
