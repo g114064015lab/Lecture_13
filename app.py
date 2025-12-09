@@ -598,7 +598,12 @@ def render_location_map(location: Dict[str, Any]) -> None:
     lon = to_float(location.get("parameters", {}).get("Longitude"))
     center_lat, center_lon = (lat, lon) if lat and lon else (23.6978, 120.9605)
     zoom = 9 if lat and lon else 6
-    point_color = get_point_color(location["timeline"][0].get("avg_temp"), location.get("category"))
+    value = (
+        location["timeline"][0].get("pop")
+        if location.get("category") == "tide"
+        else location["timeline"][0].get("avg_temp")
+    )
+    point_color = get_point_color(value, location.get("category"))
     layer = pdk.Layer(
         "ScatterplotLayer",
         data=[
@@ -606,7 +611,8 @@ def render_location_map(location: Dict[str, Any]) -> None:
                 "lat": center_lat,
                 "lon": center_lon,
                 "name": location["name"],
-                "value": location["timeline"][0].get("avg_temp"),
+                "value": value,
+                "category": location.get("category"),
                 "color": point_color,
             }
         ],
@@ -646,13 +652,14 @@ def render_overview_map(locations: List[Dict[str, Any]]) -> None:
         if lat is None or lon is None:
             continue
         slot = loc["timeline"][0]
-        color = get_point_color(slot.get("avg_temp"), loc.get("category"))
+        value = slot.get("pop") if loc.get("category") == "tide" else slot.get("avg_temp")
+        color = get_point_color(value, loc.get("category"))
         points.append(
             {
                 "lat": lat,
                 "lon": lon,
                 "name": loc["name"],
-                "value": slot.get("avg_temp"),
+                "value": value,
                 "category": loc.get("category", "weather"),
                 "color": color,
             }
@@ -697,11 +704,25 @@ def render_overview_map(locations: List[Dict[str, Any]]) -> None:
             <div style="padding:0.5rem 0;">
               <div style="font-weight:600;margin-bottom:0.25rem;">顏色圖例</div>
               <div style="display:flex;align-items:center;margin-bottom:6px;">
-                <span style="display:inline-block;width:14px;height:14px;background:#007AFF;border-radius:4px;margin-right:6px;"></span>
-                <span>潮汐點位</span>
+                <span style="display:inline-block;width:14px;height:14px;background:#38BDF8;border-radius:4px;margin-right:6px;"></span>
+                <span>潮汐強度 0–30%</span>
               </div>
               <div style="display:flex;align-items:center;margin-bottom:6px;">
-                <span style="display:inline-block;width:14px;height:14px;background:#38BDF8;border-radius:4px;margin-right:6px;"></span>
+                <span style="display:inline-block;width:14px;height:14px;background:#4ADE80;border-radius:4px;margin-right:6px;"></span>
+                <span>潮汐強度 30–60%</span>
+              </div>
+              <div style="display:flex;align-items:center;margin-bottom:6px;">
+                <span style="display:inline-block;width:14px;height:14px;background:#FACC15;border-radius:4px;margin-right:6px;"></span>
+                <span>潮汐強度 60–90%</span>
+              </div>
+              <div style="display:flex;align-items:center;">
+                <span style="display:inline-block;width:14px;height:14px;background:#EF4444;border-radius:4px;margin-right:6px;"></span>
+                <span>潮汐強度 ＞ 90%</span>
+              </div>
+              <div style="height:8px;"></div>
+              <div style="font-weight:600;margin-bottom:0.25rem;">氣溫（備用）</div>
+              <div style="display:flex;align-items:center;margin-bottom:6px;">
+                <span style="display:inline-block;width:14px;height:14px;background:#00b0ff;border-radius:4px;margin-right:6px;"></span>
                 <span>溫度 < 15°C</span>
               </div>
               <div style="display:flex;align-items:center;margin-bottom:6px;">
@@ -724,7 +745,15 @@ def render_overview_map(locations: List[Dict[str, Any]]) -> None:
 
 def get_point_color(value: Optional[float], category: Optional[str]) -> List[int]:
     if category == "tide":
-        return [0, 122, 255, 180]
+        if value is None:
+            return [180, 180, 180, 160]
+        if value < 30:
+            return [56, 189, 248, 180]
+        if value < 60:
+            return [74, 222, 128, 180]
+        if value < 90:
+            return [250, 204, 21, 180]
+        return [239, 68, 68, 220]
     if value is None:
         return [180, 180, 180, 160]
     if value < 15:
