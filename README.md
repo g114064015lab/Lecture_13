@@ -83,5 +83,3 @@
 - 若需部署到雲端（如 Streamlit Community Cloud），請將 `CWA_API_KEY` 及其他機密值放於 `secrets.toml` 或專案設定中的 Secrets。
 - 進一步的資料欄位對應、快取策略與部署建議可參考 `docs/ARCHITECTURE.md`。
 
-## 授權
-此專案以 MIT License 發佈。使用時請遵守中央氣象署開放資料使用規範。
