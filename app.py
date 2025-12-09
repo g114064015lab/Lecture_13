@@ -115,13 +115,7 @@ def main() -> None:
     render_overview_map(locations)
 
     st.markdown("---")
-    tide_locations = [loc for loc in locations if loc.get("category") == "tide"]
-    if tide_locations:
-        st.markdown("## 潮汐卡片 (近 3 日)")
-        card_cols = st.columns(len(tide_locations))
-        for col, loc in zip(card_cols, tide_locations):
-            slot = loc["timeline"][0]
-            col.markdown(render_slot_card(slot, True), unsafe_allow_html=True)
+    
 
     left_col, right_col = st.columns([1, 1.8], gap="large")
     with left_col:
@@ -729,23 +723,6 @@ def render_overview_map(locations: List[Dict[str, Any]]) -> None:
                 <span>潮汐強度 ＞ 90%</span>
               </div>
               <div style="height:8px;"></div>
-              <div style="font-weight:600;margin-bottom:0.25rem;">氣溫（備用）</div>
-              <div style="display:flex;align-items:center;margin-bottom:6px;">
-                <span style="display:inline-block;width:14px;height:14px;background:#00b0ff;border-radius:4px;margin-right:6px;"></span>
-                <span>溫度 < 15°C</span>
-              </div>
-              <div style="display:flex;align-items:center;margin-bottom:6px;">
-                <span style="display:inline-block;width:14px;height:14px;background:#4ADE80;border-radius:4px;margin-right:6px;"></span>
-                <span>15–25°C</span>
-              </div>
-              <div style="display:flex;align-items:center;margin-bottom:6px;">
-                <span style="display:inline-block;width:14px;height:14px;background:#FACC15;border-radius:4px;margin-right:6px;"></span>
-                <span>25–35°C</span>
-              </div>
-              <div style="display:flex;align-items:center;">
-                <span style="display:inline-block;width:14px;height:14px;background:#EF4444;border-radius:4px;margin-right:6px;"></span>
-                <span>＞ 35°C</span>
-              </div>
             </div>
             """,
             unsafe_allow_html=True,
